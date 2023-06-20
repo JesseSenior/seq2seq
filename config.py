@@ -98,6 +98,7 @@ def parse_config(
     ret["max_epochs"] = config["Train"].getint("max_epochs")
     ret["learning_rate"] = config["Train"].getfloat("learning_rate")
 
+    ret["batch_size"] = config["Train"].getint("batch_size")
     ret["hidden_size"] = config["Train"].getint("hidden_size")
     ret["dropout_prob"] = config["Train"].getfloat("dropout_prob")
     ret["teacher_forcing_ratio"] = config["Train"].getfloat("teacher_forcing_ratio")

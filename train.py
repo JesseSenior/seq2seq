@@ -40,6 +40,7 @@ class Config:
     max_epochs: int
     learning_rate: float
 
+    batch_size: int
     hidden_size: int
     dropout_prob: float
     teacher_forcing_ratio: float
@@ -81,11 +82,11 @@ if __name__ == "__main__":
     )
 
     train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_dataset, batch_size=1, shuffle=True
+        dataset=train_dataset, batch_size=config.batch_size, shuffle=True
     )
 
     val_dataloader = torch.utils.data.DataLoader(
-        dataset=val_dataset, batch_size=1, shuffle=False
+        dataset=val_dataset, batch_size=config.batch_size, shuffle=False
     )
 
     callbacks = [TrainerProgressBar()]

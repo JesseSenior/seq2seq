@@ -1,4 +1,4 @@
-pytorch-lightning==2.0.2
-torch==2.0.0+cu118
+pytorch-lightning >= 2.0.2
+torch >= 2.0.0
 matplotlib
-tqdm==4.65.0
+tqdm >= 4.65.0
