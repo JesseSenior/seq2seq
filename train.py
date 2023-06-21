@@ -127,25 +127,3 @@ if __name__ == "__main__":
         exit(1)
 
     trainer.save_checkpoint(config.model_path)
-
-    import matplotlib.pyplot as plt
-
-    x = list(range(1, config.max_epochs + 1))
-    train_loss = model.history["train_loss"]
-    val_loss = model.history["val_loss"]
-
-    plt.plot(
-        torch.linspace(1, config.max_epochs, len(train_loss)),
-        train_loss,
-        label="Train Loss",
-    )
-    plt.plot(
-        [x * config.validation_interval for x in range(len(val_loss))],
-        val_loss,
-        label="Validation Loss",
-    )
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.legend(loc="best")
-    plt.savefig(os.path.join(config.experiment_dir, "result.pdf"))
-    # plt.show()
