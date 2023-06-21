@@ -1,5 +1,7 @@
 import random
 import re
+import os
+from typing import Any, Dict
 
 from tqdm import tqdm
 
@@ -8,8 +10,41 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ProgressBar
+from pytorch_lightning.loggers import Logger
+from pytorch_lightning.utilities import rank_zero_only
 
 from dataset import Lang, normalizeString, SOS_TOKEN, EOS_TOKEN
+
+
+class ParamLogger(Logger):
+    def __init__(self, save_dir):
+        self._save_dir = save_dir
+
+    @property
+    def save_dir(self):
+        return self._save_dir
+
+    @property
+    def name(self):
+        return "ParamLogger"
+
+    @property
+    def version(self):
+        # Return the experiment version, int or str.
+        return "0"
+
+    @rank_zero_only
+    def log_hyperparams(self, params):
+        # params is an argparse.Namespace
+        # your code to record hyperparameters goes here
+        pass
+
+    @rank_zero_only
+    def log_metrics(self, metrics, step):
+        # metrics is a dictionary of metric names and values
+        # your code to record metrics goes here
+        with open(os.path.join(self.save_dir, "metrics.log"), "a") as f:
+            f.write(str(metrics) + "\n")
 
 
 class TrainerProgressBar(ProgressBar):
@@ -22,11 +57,12 @@ class TrainerProgressBar(ProgressBar):
         super().on_train_start(trainer, pl_module)
         if self.enabled:
             self.bar = tqdm(total=trainer.max_epochs, initial=trainer.current_epoch)
-            self.running_loss = 0.0
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx) -> None:
         if self.bar:
             postfix = self.get_metrics(trainer, pl_module)
+            if "v_num" in postfix.keys():
+                del postfix["v_num"]
             for key in postfix.keys():
                 if type(postfix[key]) == float:
                     postfix[key] = "%.3f" % postfix[key]
@@ -119,6 +155,8 @@ class Seq2seq(Model):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self.save_hyperparameters()
+
         self.hidden_size = hidden_size
         self.max_length = max_length
         self.learning_rate = learning_rate
@@ -133,16 +171,9 @@ class Seq2seq(Model):
             dropout_p=dropout_prob,
         )
 
-        self.history = {"train_loss": [], "val_loss": []}
-        self.save_hyperparameters()
-
-    def on_train_epoch_start(self) -> None:
-        self.train_loss_list = []
-
     def training_step(self, batch, batch_idx):
         input_sentences, target_sentences = batch
         loss = 0
-        loss_len = 0
         for input_sentence, target_sentence in zip(input_sentences, target_sentences):
             encoder_hidden = self.encoder.initHidden().to(self.device)
 
@@ -151,7 +182,9 @@ class Seq2seq(Model):
 
             input_length = input_tensor.size(0)
             target_length = target_tensor.size(0)
-            loss_len += target_length
+
+            step_loss = 0
+            step_loss_len = target_length
 
             encoder_outputs = torch.zeros(
                 self.max_length, self.hidden_size, device=self.device
@@ -175,7 +208,7 @@ class Seq2seq(Model):
                     decoder_output, decoder_hidden, _ = self.decoder(
                         decoder_input, decoder_hidden, encoder_outputs
                     )
-                    loss += self.criterion(decoder_output, target_tensor[di])
+                    step_loss += self.criterion(decoder_output, target_tensor[di])
                     decoder_input = target_tensor[di]  # Teacher forcing
 
             else:
@@ -189,28 +222,23 @@ class Seq2seq(Model):
                         topi.squeeze().detach()
                     )  # detach from history as input
 
-                    loss += self.criterion(decoder_output, target_tensor[di])
+                    step_loss += self.criterion(decoder_output, target_tensor[di])
                     if decoder_input.item() == EOS_TOKEN:
                         break
-        loss /= loss_len
-        self.train_loss_list.append(loss)
-        self.log("loss", loss, prog_bar=True)
+            loss += step_loss / step_loss_len
+        self.log("loss", loss / len(input_sentences), logger=False, prog_bar=True)
+        self.log(
+            "train_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(input_sentences),
+        )
         return loss
-
-    def on_train_epoch_end(self):
-        try:
-            train_loss = sum(self.train_loss_list) / len(self.train_loss_list)
-            self.history["train_loss"].append(train_loss)
-        except ZeroDivisionError:
-            pass
-
-    def on_validation_epoch_start(self) -> None:
-        self.val_loss_list = []
 
     def validation_step(self, batch, batch_idx):
         input_sentences, target_sentences = batch
         loss = 0
-        loss_len = 0
         for input_sentence, target_sentence in zip(input_sentences, target_sentences):
             encoder_hidden = self.encoder.initHidden().to(self.device)
 
@@ -219,7 +247,8 @@ class Seq2seq(Model):
 
             input_length = input_tensor.size(0)
             target_length = target_tensor.size(0)
-            loss_len += target_length
+            step_loss = 0
+            step_loss_len = target_length
 
             encoder_outputs = torch.zeros(
                 self.max_length, self.hidden_size, device=self.device
@@ -242,24 +271,13 @@ class Seq2seq(Model):
                 _, topi = decoder_output.topk(1)
                 decoder_input = topi.squeeze().detach()  # detach from history as input
 
-                loss += self.criterion(decoder_output, target_tensor[di])
+                step_loss += self.criterion(decoder_output, target_tensor[di])
                 if decoder_input.item() == EOS_TOKEN:
                     break
+            loss += step_loss / step_loss_len
 
-        loss /= loss_len
-        self.val_loss_list.append(loss)
+        self.log("val_loss", loss, batch_size=len(input_sentences), prog_bar=True)
         return loss
-
-    def on_validation_epoch_end(self):
-        val_loss = sum(self.val_loss_list).item() / len(self.val_loss_list)
-        self.history["val_loss"].append(val_loss)
-        self.log("val_loss", val_loss, prog_bar=True)
-        try:
-            tqdm.write(
-                f"[Train] Loss: {self.history['train_loss'][-1]:.3f} Val Loss: {self.history['val_loss'][-1]:.3f}"
-            )
-        except IndexError:
-            pass
 
     def forward(self, sentence):
         input_tensor = self.input_lang.toTensor(sentence).to(self.device)

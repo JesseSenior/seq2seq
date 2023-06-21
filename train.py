@@ -6,7 +6,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import torch
 
 from config import parse_config
-from model import Model, TrainerProgressBar
+from model import Model, TrainerProgressBar, ParamLogger
 
 import warnings
 
@@ -96,15 +96,18 @@ if __name__ == "__main__":
     if config.enable_checkpoint:
         checkpoint_callback = ModelCheckpoint(
             every_n_epochs=config.max_epochs // config.checkpoint_cnt,
+            save_top_k=-1,
             dirpath=config.checkpoint_path,
             save_last=True,
         )
         callbacks.append(checkpoint_callback)
         other_kwargs["ckpt_path"] = "last"
 
+    logger = ParamLogger(config.experiment_dir)
+
     trainer = pl.Trainer(
         max_epochs=config.max_epochs,
-        logger=False,
+        logger=logger,
         enable_checkpointing=config.enable_checkpoint,
         check_val_every_n_epoch=config.validation_interval,
         callbacks=callbacks,

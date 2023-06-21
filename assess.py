@@ -1,12 +1,10 @@
 import argparse
 import os
-from typing import List
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+import ast
 import torch
 
 from config import parse_config
-from model import Model, TrainerProgressBar
+from model import Model
 
 import matplotlib.pyplot as plt
 
@@ -53,23 +51,28 @@ def parse_args() -> Config:
 
 if __name__ == "__main__":
     config = parse_args()
-    if not os.path.isfile(config.model_path):
-        raise Exception("Model not found")
-    model = config.model.load_from_checkpoint(config.model_path)
-    model.eval()
+    if not os.path.isfile(os.path.join(config.experiment_dir, "metrics.log")):
+        raise Exception("Model's metrics.log not found")
 
-    x = list(range(1, config.max_epochs + 1))
-    train_loss = model.history["train_loss"]
-    val_loss = model.history["val_loss"]
+    train_loss = dict()
+    val_loss = dict()
+    with open(os.path.join(config.experiment_dir, "metrics.log"), "r") as f:
+        for line in f:
+            metric = ast.literal_eval(line)
+            metric: dict
+            if "train_loss" in metric.keys():
+                train_loss[metric["epoch"]] = metric["train_loss"]
+            if "val_loss" in metric.keys():
+                val_loss[metric["epoch"]] = metric["val_loss"]
 
     plt.plot(
-        range(1, len(train_loss) + 1),
-        train_loss,
+        sorted(train_loss.keys()),
+        [train_loss[id] for id in sorted(train_loss.keys())],
         label="Train Loss",
     )
     plt.plot(
-        [x * config.validation_interval for x in range(len(val_loss))],
-        val_loss,
+        sorted(val_loss.keys()),
+        [val_loss[id] for id in sorted(val_loss.keys())],
         label="Validation Loss",
     )
     plt.xlabel("Epochs")
