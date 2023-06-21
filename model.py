@@ -253,6 +253,13 @@ class Seq2seq(Model):
     def on_validation_epoch_end(self):
         val_loss = sum(self.val_loss_list).item() / len(self.val_loss_list)
         self.history["val_loss"].append(val_loss)
+        self.log("val_loss", val_loss, prog_bar=True)
+        try:
+            tqdm.write(
+                f"[Train] Loss: {self.history['train_loss'][-1]:.3f} Val Loss: {self.history['val_loss'][-1]:.3f}"
+            )
+        except IndexError:
+            pass
 
     def forward(self, sentence):
         input_tensor = self.input_lang.toTensor(sentence).to(self.device)

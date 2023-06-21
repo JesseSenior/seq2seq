@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore", ".*Checkpoint directory .* exists and is not e
 
 torch.set_float32_matmul_precision("medium")
 
+
 # Dirty hack for autocomplete
 class Config:
     experiment_dir: str
@@ -38,6 +39,7 @@ class Config:
 
     # Train
     max_epochs: int
+    validation_interval: int
     learning_rate: float
 
     batch_size: int
@@ -104,7 +106,7 @@ if __name__ == "__main__":
         max_epochs=config.max_epochs,
         logger=False,
         enable_checkpointing=config.enable_checkpoint,
-        check_val_every_n_epoch=10,
+        check_val_every_n_epoch=config.validation_interval,
         callbacks=callbacks,
         default_root_dir=config.experiment_dir,
     )
@@ -138,7 +140,7 @@ if __name__ == "__main__":
         label="Train Loss",
     )
     plt.plot(
-        torch.linspace(1, config.max_epochs, len(val_loss) + 1)[1:],
+        [x * config.validation_interval for x in range(len(val_loss))],
         val_loss,
         label="Validation Loss",
     )

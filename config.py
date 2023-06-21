@@ -96,6 +96,7 @@ def parse_config(
 
     ##### Train #####
     ret["max_epochs"] = config["Train"].getint("max_epochs")
+    ret["validation_interval"] = config["Train"].getint("validation_interval")
     ret["learning_rate"] = config["Train"].getfloat("learning_rate")
 
     ret["batch_size"] = config["Train"].getint("batch_size")
