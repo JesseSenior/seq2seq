@@ -171,99 +171,50 @@ class Seq2seq(Model):
             dropout_p=dropout_prob,
         )
 
-    def training_step(self, batch, batch_idx):
-        input_sentences, target_sentences = batch
-        loss = 0
-        for input_sentence, target_sentence in zip(input_sentences, target_sentences):
-            encoder_hidden = self.encoder.initHidden().to(self.device)
+    def step(
+        self,
+        input_sentence: str,
+        target_sentence: str = None,
+        teacher_forcing_ratio: float = 0,
+    ):
+        encoder_hidden = self.encoder.initHidden().to(self.device)
+        input_tensor = self.input_lang.toTensor(input_sentence).to(self.device)
+        input_length = input_tensor.size(0)
 
-            input_tensor = self.input_lang.toTensor(input_sentence).to(self.device)
+        if target_sentence != None:
             target_tensor = self.output_lang.toTensor(target_sentence).to(self.device)
-
-            input_length = input_tensor.size(0)
             target_length = target_tensor.size(0)
 
-            step_loss = 0
-            step_loss_len = target_length
+        loss = 0
 
-            encoder_outputs = torch.zeros(
-                self.max_length, self.hidden_size, device=self.device
-            )
-
-            for ei in range(input_length):
-                encoder_output, encoder_hidden = self.encoder(
-                    input_tensor[ei], encoder_hidden
-                )
-                encoder_outputs[ei] = encoder_output[0, 0]
-
-            decoder_input = torch.tensor([[SOS_TOKEN]], device=self.device)
-
-            decoder_hidden = encoder_hidden
-
-            use_teacher_forcing = random.random() < self.teacher_forcing_ratio
-
-            if use_teacher_forcing:
-                # Teacher forcing: Feed the target as the next input
-                for di in range(target_length):
-                    decoder_output, decoder_hidden, _ = self.decoder(
-                        decoder_input, decoder_hidden, encoder_outputs
-                    )
-                    step_loss += self.criterion(decoder_output, target_tensor[di])
-                    decoder_input = target_tensor[di]  # Teacher forcing
-
-            else:
-                # Without teacher forcing: use its own predictions as the next input
-                for di in range(target_length):
-                    decoder_output, decoder_hidden, _ = self.decoder(
-                        decoder_input, decoder_hidden, encoder_outputs
-                    )
-                    _, topi = decoder_output.topk(1)
-                    decoder_input = (
-                        topi.squeeze().detach()
-                    )  # detach from history as input
-
-                    step_loss += self.criterion(decoder_output, target_tensor[di])
-                    if decoder_input.item() == EOS_TOKEN:
-                        break
-            loss += step_loss / step_loss_len
-        self.log("loss", loss / len(input_sentences), logger=False, prog_bar=True)
-        self.log(
-            "train_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            batch_size=len(input_sentences),
+        encoder_outputs = torch.zeros(
+            self.max_length, self.hidden_size, device=self.device
         )
-        return loss
 
-    def validation_step(self, batch, batch_idx):
-        input_sentences, target_sentences = batch
-        loss = 0
-        for input_sentence, target_sentence in zip(input_sentences, target_sentences):
-            encoder_hidden = self.encoder.initHidden().to(self.device)
-
-            input_tensor = self.input_lang.toTensor(input_sentence).to(self.device)
-            target_tensor = self.output_lang.toTensor(target_sentence).to(self.device)
-
-            input_length = input_tensor.size(0)
-            target_length = target_tensor.size(0)
-            step_loss = 0
-            step_loss_len = target_length
-
-            encoder_outputs = torch.zeros(
-                self.max_length, self.hidden_size, device=self.device
+        for ei in range(input_length):
+            encoder_output, encoder_hidden = self.encoder(
+                input_tensor[ei], encoder_hidden
             )
+            encoder_outputs[ei] = encoder_output[0, 0]
 
-            for ei in range(input_length):
-                encoder_output, encoder_hidden = self.encoder(
-                    input_tensor[ei], encoder_hidden
+        decoder_input = torch.tensor([[SOS_TOKEN]], device=self.device)
+        decoder_result = list()
+
+        decoder_hidden = encoder_hidden
+
+        use_teacher_forcing = random.random() < teacher_forcing_ratio
+
+        if use_teacher_forcing and target_sentence != None:
+            # Teacher forcing: Feed the target as the next input
+            for di in range(target_length):
+                decoder_output, decoder_hidden, _ = self.decoder(
+                    decoder_input, decoder_hidden, encoder_outputs
                 )
-                encoder_outputs[ei] = encoder_output[0, 0]
+                loss += self.criterion(decoder_output, target_tensor[di])
+                decoder_input = target_tensor[di]  # Teacher forcing
 
-            decoder_input = torch.tensor([[SOS_TOKEN]], device=self.device)
-
-            decoder_hidden = encoder_hidden
-
+        else:
+            # Without teacher forcing: use its own predictions as the next input
             for di in range(target_length):
                 decoder_output, decoder_hidden, _ = self.decoder(
                     decoder_input, decoder_hidden, encoder_outputs
@@ -271,51 +222,61 @@ class Seq2seq(Model):
                 _, topi = decoder_output.topk(1)
                 decoder_input = topi.squeeze().detach()  # detach from history as input
 
-                step_loss += self.criterion(decoder_output, target_tensor[di])
+                if target_sentence != None:
+                    loss += self.criterion(decoder_output, target_tensor[di])
+                else:
+                    decoder_result.append(topi.item())
                 if decoder_input.item() == EOS_TOKEN:
                     break
-            loss += step_loss / step_loss_len
 
-        self.log("val_loss", loss, batch_size=len(input_sentences), prog_bar=True)
+        if target_sentence != None:
+            return loss / target_length
+        else:
+            return decoder_result
+
+    def training_step(self, batch, batch_idx):
+        input_sentences, target_sentences = batch
+        loss = 0
+        batch_size = len(input_sentences)
+        for input_sentence, target_sentence in zip(input_sentences, target_sentences):
+            loss += self.step(
+                input_sentence,
+                target_sentence,
+                self.teacher_forcing_ratio,
+            )
+        loss /= batch_size
+
+        self.log("loss", loss, logger=False, prog_bar=True)
+        self.log(
+            "train_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            batch_size=batch_size,
+            sync_dist=True,
+        )
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        input_sentences, target_sentences = batch
+        loss = 0
+        batch_size = len(input_sentences)
+        for input_sentence, target_sentence in zip(input_sentences, target_sentences):
+            loss += self.step(input_sentence, target_sentence)
+        loss /= batch_size
+
+        self.log(
+            "val_loss",
+            loss,
+            batch_size=batch_size,
+            prog_bar=True,
+            sync_dist=True,
+        )
         return loss
 
     def forward(self, sentence):
-        input_tensor = self.input_lang.toTensor(sentence).to(self.device)
-        input_length = input_tensor.size()[0]
-        encoder_hidden = self.encoder.initHidden().to(self.device)
-
-        encoder_outputs = torch.zeros(
-            self.max_length, self.encoder.hidden_size, device=self.device
-        )
-
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = self.encoder(
-                input_tensor[ei], encoder_hidden
-            )
-            encoder_outputs[ei] += encoder_output[0, 0]
-
-        decoder_input = torch.tensor([[SOS_TOKEN]], device=self.device)  # SOS
-
-        decoder_hidden = encoder_hidden
-
-        decoded_tensor = []
-        decoder_attentions = torch.zeros(
-            self.max_length, self.max_length, device=self.device
-        )
-
-        for di in range(self.max_length):
-            decoder_output, decoder_hidden, decoder_attention = self.decoder(
-                decoder_input, decoder_hidden, encoder_outputs
-            )
-            decoder_attentions[di] = decoder_attention.data
-            topv, topi = decoder_output.data.topk(1)
-            decoded_tensor.append(topi.item())
-            if topi.item() == EOS_TOKEN:
-                break
-
-            decoder_input = topi.squeeze().detach()
-        decoded_tensor = torch.tensor(decoded_tensor)
-        return self.output_lang.toSentence(decoded_tensor)
+        decoder_result = torch.tensor(self.step(sentence))
+        return self.output_lang.toSentence(decoder_result)
 
     def configure_optimizers(self):
         return torch.optim.SGD(self.parameters(), lr=self.learning_rate)
