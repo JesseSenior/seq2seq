@@ -176,6 +176,7 @@ class Seq2seq(Model):
         input_sentence: str,
         target_sentence: str = None,
         teacher_forcing_ratio: float = 0,
+        get_attention: bool = False,
     ):
         encoder_hidden = self.encoder.initHidden().to(self.device)
         input_tensor = self.input_lang.toTensor(input_sentence).to(self.device)
@@ -184,8 +185,13 @@ class Seq2seq(Model):
         if target_sentence != None:
             target_tensor = self.output_lang.toTensor(target_sentence).to(self.device)
             target_length = target_tensor.size(0)
+        else:
+            target_length = self.max_length
 
         loss = 0
+
+        if get_attention:
+            attentions = []
 
         encoder_outputs = torch.zeros(
             self.max_length, self.hidden_size, device=self.device
@@ -207,20 +213,25 @@ class Seq2seq(Model):
         if use_teacher_forcing and target_sentence != None:
             # Teacher forcing: Feed the target as the next input
             for di in range(target_length):
-                decoder_output, decoder_hidden, _ = self.decoder(
+                decoder_output, decoder_hidden, attn_weights = self.decoder(
                     decoder_input, decoder_hidden, encoder_outputs
                 )
                 loss += self.criterion(decoder_output, target_tensor[di])
                 decoder_input = target_tensor[di]  # Teacher forcing
+                if get_attention:
+                    attentions.append(attn_weights)
 
         else:
             # Without teacher forcing: use its own predictions as the next input
             for di in range(target_length):
-                decoder_output, decoder_hidden, _ = self.decoder(
+                decoder_output, decoder_hidden, attn_weights = self.decoder(
                     decoder_input, decoder_hidden, encoder_outputs
                 )
                 _, topi = decoder_output.topk(1)
                 decoder_input = topi.squeeze().detach()  # detach from history as input
+
+                if get_attention:
+                    attentions.append(attn_weights)
 
                 if target_sentence != None:
                     loss += self.criterion(decoder_output, target_tensor[di])
@@ -229,7 +240,13 @@ class Seq2seq(Model):
                 if decoder_input.item() == EOS_TOKEN:
                     break
 
-        if target_sentence != None:
+        if get_attention:
+            attentions = torch.cat(attentions, dim=0)
+            if target_sentence != None:
+                return loss / target_length, attentions
+            else:
+                return decoder_result, attentions
+        elif target_sentence != None:
             return loss / target_length
         else:
             return decoder_result
@@ -274,7 +291,12 @@ class Seq2seq(Model):
         )
         return loss
 
-    def forward(self, sentence):
+    def forward(self, sentence, get_attention: bool = False):
+        if get_attention:
+            decoder_result, attentions = self.step(
+                sentence, get_attention=get_attention
+            )
+            return self.output_lang.toSentence(torch.tensor(decoder_result)), attentions.detach().cpu().numpy()
         decoder_result = torch.tensor(self.step(sentence))
         return self.output_lang.toSentence(decoder_result)
 
