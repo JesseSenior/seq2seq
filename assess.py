@@ -20,6 +20,17 @@ warnings.filterwarnings(
     "ignore", ".*FixedFormatter should only be used together with FixedLocator.*"
 )
 
+import matplotlib
+from matplotlib import font_manager
+
+font_dirs = ['/usr/share/fonts/truetype', ]
+font_files = font_manager.findSystemFonts(fontpaths=font_dirs)
+
+for font_file in font_files:
+    font_manager.fontManager.addfont(font_file)
+    
+matplotlib.rcParams['font.family'] = 'AR PL UKai CN' # For Ubuntu env, with fonts-arphic-ukai installed
+
 
 # Dirty hack for autocomplete
 class Config:
@@ -154,11 +165,11 @@ if __name__ == "__main__":
         while len(heap) > heap_capacity:
             heap_pop()
 
-    progress_bar = tqdm(val_dataset, leave=False)
+    progress_bar = tqdm(val_dataset, leave=False)# tqdm(Subset(val_dataset, range(100)), leave=False)#
     for (
         input_sentence,
         target_sentence,
-    ) in progress_bar:  # tqdm(Subset(val_dataset, range(100)))
+    ) in progress_bar:  
         ts = target_sentence + " <EOS>"
         hs = model(input_sentence)
         bleu_score = sentence_bleu(
@@ -172,8 +183,6 @@ if __name__ == "__main__":
     print(f"The best {len(heap)} results shows as follows:")
     print()
 
-    plt.rcParams["font.sans-serif"] = ["KaiTi"]
-    plt.rcParams["axes.unicode_minus"] = False
     for id, (score, input_sentence, target_sentence) in enumerate(
         sorted(heap, key=lambda x: x[0], reverse=True), start=1
     ):
